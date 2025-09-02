@@ -15,6 +15,8 @@ from grok_produce.structured.api_client.background_order_tpsl_coordinator import
     place_limit_long, handle_sl_if_any, recover_open_positions_and_watch, dump_bracket, poke_eval_now,
     force_register_bracket_from_position, audit_and_fix_brackets
 )
+from grok_produce.structured.api_client.entry_guard import is_blocked as guard_blocked
+from grok_produce.structured.api_client.v2_on_candle_close_tp_sl import has_active_bracket
 
 # Live candles (global manager)
 from grok_produce.structured.websocket.bitget_live_klines import (
@@ -81,7 +83,7 @@ def _endpoints():
         # WS public v2:
         ws_url="wss://ws.bitget.com/v2/ws/public",
         ws_inst_type="USDT-FUTURES",
-        ping_interval_sec=None,  # still let the library handle heartbeats
+        ping_interval_sec = 30,  # still let the library handle heartbeats
     )
 
 
@@ -123,7 +125,7 @@ def live_trading(strategy_name=STRATEGY_NAME):
 
     # optional: rebuild your own runtime shadow state if you keep it
     try:
-        open_positions, trades_today, skip_day = rebuild_runtime_state(SYMBOLS)
+        trades_today, skip_day = rebuild_runtime_state(SYMBOLS)
         logging.info("Runtime state rebuilt from disk/cache.")
     except Exception:
         logging.info("No prior runtime snapshot found; starting fresh.")
@@ -131,9 +133,9 @@ def live_trading(strategy_name=STRATEGY_NAME):
     # 5) Main loop
     last_day = None
     i = -1
+    last_audit = 0
     while True:
         # at top of live_trading, before the loop:
-        last_audit = 0
 
         # inside the while True main loop, once per ~60s:
         now = time.time()
@@ -149,6 +151,8 @@ def live_trading(strategy_name=STRATEGY_NAME):
             # warn_if_stale()
             for symbol in SYMBOLS:
 
+                if guard_blocked(symbol) or has_active_bracket(symbol):
+                    continue
                 # warn_if_stale()
                 # Per-day limits / cooldown
                 if skip_day[symbol] > 0:
@@ -173,15 +177,15 @@ def live_trading(strategy_name=STRATEGY_NAME):
                 signal, atr = strategy.check_signals(df_5m, df_4h, len(df_5m)-1)
                 if not signal:
                     # also consume any exits logged by the background bracket (if any)
-                    handle_sl_if_any(symbol, open_positions, get_account_balance("USDT"), df_5m, idx, strategy_name, skip_day)
-                    continue
-                if symbol in open_positions:
+                    handle_sl_if_any(symbol, get_account_balance("USDT"), df_5m, idx, strategy_name, skip_day)
                     continue
                 # --- Risk / balance check ---
                 current_balance = float(get_account_balance("USDT"))
-                if current_balance < initial_balance * (1 - LOSS_LIMIT):
-                    logging.error(f"Loss limit reached. equity={current_balance:.2f} USDT; stopping.")
-                    continue
+                bal_after, closed = handle_sl_if_any(symbol, current_balance, df_5m, idx, strategy_name,
+                                                     skip_day)
+                if closed:
+                    logging.info(f"{symbol}: position closed; balance ~{bal_after:.2f} USDT")
+                    continue  # or fall through; up to you
 
                 # --- Entry sizing ---
                 # mark = float(get_future_symbol_mark_price(symbol))
@@ -193,6 +197,9 @@ def live_trading(strategy_name=STRATEGY_NAME):
                     continue
                 # --- Place a GTC LIMIT at current mark (tune your price policy here) ---
                 # You can bias a few ticks below mark for longs if you prefer; this keeps it simple.
+                if current_balance < initial_balance * (1 - LOSS_LIMIT):
+                    logging.error(f"Loss limit reached. equity={current_balance:.2f} USDT; stopping.")
+                    continue
                 out = place_limit_long(
                     symbol,
                     size=str(position_size),
@@ -207,24 +214,14 @@ def live_trading(strategy_name=STRATEGY_NAME):
                 )
                 logging.info(f"{symbol}: placed LIMIT long @ {mark:.6f} | out={out}")
 
-                # Optional: mirror a lightweight shadow record (your earlier JSON persistence)
-                # try:
-                #     entry_price = float(get_entry_price(symbol))  # may still be pending; safe fallback
-                #     open_positions[symbol] = {
-                #         "entry_price": entry_price or mark,
-                #         "amount": position_size,
-                #     }
-                # except Exception:
-                #     print("failed when trying to fetch the filled order's entry price")
-                #     pass
 
                 # Increment daily trade count only on successful place (keep it simple)
                 trades_today[symbol][now_day] = trades_today[symbol].get(now_day, 0) + 1
 
-                # After placing, also check if a candle-close exit fired meanwhile (rare but safe)
-                bal_after, closed = handle_sl_if_any(symbol, open_positions, current_balance, df_5m, idx, strategy_name, skip_day)
-                if closed:
-                    logging.info(f"{symbol}: position closed on exit; balance now ~{bal_after:.2f} USDT")
+                # # After placing, also check if a candle-close exit fired meanwhile (rare but safe)
+                # bal_after, closed = handle_sl_if_any(symbol, current_balance, df_5m, idx, strategy_name, skip_day)
+                # if closed:
+                #     logging.info(f"{symbol}: position closed on exit; balance now ~{bal_after:.2f} USDT")
 
                 # small pacing to avoid hammering your account endpoints
                 time.sleep(0.2)

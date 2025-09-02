@@ -2,14 +2,7 @@ import os, time, json, hmac, base64, hashlib, requests
 from decimal import Decimal
 from typing import Any, Dict, Optional, List
 
-
-API_KEY = "***REMOVED***"
-API_SECRET = "***REMOVED***"
-API_PASSPHRASE = "***REMOVED***"
-
-# API_KEY = os.getenv("BITGET_API_KEY", API_KEY)
-# API_SECRET = os.getenv("BITGET_API_SECRET", API_SECRET)
-# API_PASSPHRASE = os.getenv("BITGET_API_PASSPHRASE", API_PASSPHRASE)
+from grok_produce.structured.api_client import API_SECRET, API_PASSPHRASE, API_KEY
 
 BASE_URL = "https://api.bitget.com"
 SIM_HEADERS = {"PAPTRADING": "1"}
@@ -84,37 +77,72 @@ def _sign(secret: str, prehash: str) -> str:
     import hmac, hashlib, base64
     return base64.b64encode(hmac.new(secret.encode(), prehash.encode(), hashlib.sha256).digest()).decode()
 
-def _auth_headers(method: str, request_path_with_query: str, body: Optional[dict]) -> Dict[str, str]:
-    ts = _now_ms()  # << use server-synced ms timestamp
-    body_str = "" if (not body or method.upper() == "GET") else json.dumps(body, separators=(",", ":"), ensure_ascii=False)
-    prehash = f"{ts}{method.upper()}{request_path_with_query}{body_str}"
-    headers = {
+# def _auth_headers(method: str, request_path_with_query: str, body: Optional[dict]) -> Dict[str, str]:
+#     ts = _now_ms()  # << use server-synced ms timestamp
+#     body_str = "" if (not body or method.upper() == "GET") else json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+#     prehash = f"{ts}{method.upper()}{request_path_with_query}{body_str}"
+#     headers = {
+#         "ACCESS-KEY": API_KEY,
+#         "ACCESS-SIGN": _sign(API_SECRET, prehash),
+#         "ACCESS-TIMESTAMP": ts,
+#         "ACCESS-PASSPHRASE": API_PASSPHRASE,
+#         "Content-Type": "application/json",
+#     }
+#     headers.update(SIM_HEADERS)  # PAPTRADING: '1'
+#     return headers
+#
+# def _req(method: str, path: str, *, params: Optional[dict] = None, body: Optional[dict] = None):
+#     qp = _q(params)
+#     request_path_with_query = path + qp                  # exact string used for signing
+#     url = BASE_URL + request_path_with_query             # and exact same string sent to server
+#     headers = _auth_headers(method, request_path_with_query, body)
+#
+#     try:
+#         if method.upper() == "GET":
+#             r = requests.get(url, headers=headers, timeout=20)         # NOTE: no params= here
+#         else:
+#             payload = json.dumps(body or {}, separators=(",", ":"), ensure_ascii=False)
+#             r = requests.post(url, headers=headers, data=payload, timeout=20)
+#         if not (200 <= r.status_code < 300):
+#             raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text}", response=r)
+#         return r.json()
+#     except requests.HTTPError:
+#         raise
+
+def _auth_headers(method: str, request_path_with_query: str, payload_str: str) -> Dict[str, str]:
+    ts = _now_ms()
+    prehash = f"{ts}{method.upper()}{request_path_with_query}{payload_str}"
+    return {
         "ACCESS-KEY": API_KEY,
         "ACCESS-SIGN": _sign(API_SECRET, prehash),
         "ACCESS-TIMESTAMP": ts,
         "ACCESS-PASSPHRASE": API_PASSPHRASE,
         "Content-Type": "application/json",
+        **SIM_HEADERS,   # PAPTRADING: '1'
     }
-    headers.update(SIM_HEADERS)  # PAPTRADING: '1'
-    return headers
 
 def _req(method: str, path: str, *, params: Optional[dict] = None, body: Optional[dict] = None):
     qp = _q(params)
-    request_path_with_query = path + qp                  # exact string used for signing
-    url = BASE_URL + request_path_with_query             # and exact same string sent to server
-    headers = _auth_headers(method, request_path_with_query, body)
+    request_path_with_query = path + qp
+    url = BASE_URL + request_path_with_query
 
-    try:
-        if method.upper() == "GET":
-            r = requests.get(url, headers=headers, timeout=20)         # NOTE: no params= here
-        else:
-            payload = json.dumps(body or {}, separators=(",", ":"), ensure_ascii=False)
-            r = requests.post(url, headers=headers, data=payload, timeout=20)
-        if not (200 <= r.status_code < 300):
-            raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text}", response=r)
-        return r.json()
-    except requests.HTTPError:
-        raise
+    # one canonical payload string
+    if method.upper() == "GET":
+        payload_str = ""
+    else:
+        payload_str = json.dumps(body or {}, separators=(",", ":"), ensure_ascii=False)
+
+    headers = _auth_headers(method, request_path_with_query, payload_str)
+
+    if method.upper() == "GET":
+        r = requests.get(url, headers=headers, timeout=20)
+    else:
+        r = requests.post(url, headers=headers, data=payload_str, timeout=20)
+
+    if not (200 <= r.status_code < 300):
+        raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text}", response=r)
+    return r.json()
+
 
 # ---------- Create Unique IDs and Monitor them ------
 import uuid

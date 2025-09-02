@@ -33,7 +33,7 @@ import requests
 import pandas as pd
 from websocket import WebSocketApp
 import websocket
-websocket.enableTrace(True)  # VERY verbose; disable in prod
+# websocket.enableTrace(True)  # VERY verbose; disable in prod
 # -------------------- Utilities --------------------
 
 _TIMEFRAME_TO_SECONDS = {
@@ -233,7 +233,7 @@ class LiveKlinesManager:
 
     def get_window(self, symbol: str, timeframe: str) -> pd.DataFrame:
         key = (symbol, timeframe)
-        key_lock = self._get_key_lock(key)
+        # key_lock = self._get_key_lock(key)
         with self._key_lock(key):
             df = self.store.get(key)
             if df is None or df.empty:
@@ -342,6 +342,9 @@ class LiveKlinesManager:
         send_lock = threading.RLock()  # guard ws.send across threads
         last_msg_ts = {"ts": time.time()}  # simple watchdog state
 
+        # NEW: local event only for this run
+        local_stop = threading.Event()
+
         def _safe_send(payload: dict, label: str):
             try:
                 data = json.dumps(payload)
@@ -368,7 +371,10 @@ class LiveKlinesManager:
             except Exception:
                 logging.error("[WS] subscribe assembly failed", exc_info=True)
 
-        def _on_message(ws: WebSocketApp, message: str):
+        def _on_message(ws, message: str):
+            if message == "pong" or message == "ping":
+                last_msg_ts["ts"] = time.time()
+                return
             try:
                 msg = json.loads(message)
             except Exception:
@@ -390,7 +396,6 @@ class LiveKlinesManager:
             if isinstance(msg, dict) and msg.get("op") in ("pong", "ping"):
                 return
 
-            print(msg)
             rows = self.endpoints.parse_ws_klines(msg)
             if not rows:
                 return
@@ -444,7 +449,7 @@ class LiveKlinesManager:
                 code, reason = args
             logging.warning("WS closed. code=%r reason=%r", code, reason)
             # Make sure pinger stops quickly after close
-            self._stop_event.set()
+            local_stop.set()
 
         # (Optional) WS-level on_pong if you ever enable WS pings
         def _on_pong(ws, data):
@@ -464,16 +469,20 @@ class LiveKlinesManager:
         # ---- pinger thread (app-level heartbeat) --------------------------------
 
         def _pinger():
-            # If the exchange mandates JSON heartbeats, keep this.
-            interval = int(self.endpoints.ping_interval_sec or 15)
-            while not self._stop_event.is_set():
-                payload = {"op": "ping", "ts": _now_ms()}
-                if not _safe_send(payload, "app-ping"):
-                    # If send fails, bail; _ws_worker will reconnect
+            interval = int(self.endpoints.ping_interval_sec or 30)
+            while not (self._stop_event.is_set() or local_stop.is_set()):
+                try:
+                    # only attempt if connected
+                    sock = getattr(self._ws_app, "sock", None)
+                    if not (sock and getattr(sock, "connected", False)):
+                        return
+                    self._ws_app.send("ping")  # Bitget expects a literal "ping"
+                except Exception:
+                    # downgrade to INFO if it’s too chatty
+                    logging.info("[WS] app-ping skipped (socket closed)")
                     return
-                # sleep with responsiveness to stop_event
                 for _ in range(interval):
-                    if self._stop_event.is_set():
+                    if self._stop_event.is_set() or local_stop.is_set():
                         return
                     time.sleep(1)
 
@@ -508,7 +517,8 @@ class LiveKlinesManager:
             logging.error("websocket.run_forever failed", exc_info=True)
         finally:
             # ensure we won’t leave background threads dangling
-            self._stop_event.set()
+            pass
+            # local_stop.set()
 
     # ---------- Merge logic ----------
 

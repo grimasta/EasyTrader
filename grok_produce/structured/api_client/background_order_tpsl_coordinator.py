@@ -9,13 +9,18 @@ from datetime import datetime
 from grok_produce.structured.api_client.v2_bootstrap_client import quantize_price
 from grok_produce.structured.proof_of_concept_for_order_placing import _req
 from grok_produce.structured.proof_of_concept_for_order_placing import MARGIN_COIN, PRODUCT_TYPE  # e.g., USDT / USDT-FUTURES
-
+from grok_produce.structured.proof_of_concept_for_order_placing import flash_close_positions, get_pos_mode
 from grok_produce.structured.api_client.self_cancel_timer import schedule_self_cancel  # threading.Timer helper
 
-from grok_produce.structured.api_client.v2_on_candle_close_tp_sl import register_delayed_bracket, on_candle_close, delayed_brackets
-
+from grok_produce.structured.api_client.v2_on_candle_close_tp_sl import (
+    register_delayed_bracket, on_candle_close,
+    get_bracket_snapshot, has_active_bracket, deactivate_bracket, clear_bracket
+)
+from grok_produce.structured.api_client.entry_guard import set_pending, set_open, clear as guard_clear
 from grok_produce.structured.websocket.bitget_live_klines import get_5m_from, get_4h_from
 # ===============================================================================================
+
+
 
 
 OrderId = str
@@ -160,9 +165,9 @@ class _CandleCloseCoordinator:
                 self._last_seen[key] = last_t
 
                 # only if there's an active bracket
-                br = delayed_brackets.get(symbol)
-                if not br or not br.active:
+                if not has_active_bracket(symbol):
                     continue
+                br = get_bracket_snapshot(symbol)  # for debug/log fields only
 
                 try:
                     logging.debug(f"[BRACKET] eval {symbol} {tf}: close={last_c}, "
@@ -183,12 +188,67 @@ class _CandleCloseCoordinator:
                         meta={"timeframe": tf, "close_price": last_c, "bucket": last_t},
                     )
                     _EXIT_EVENTS.append(evt)
+                    _EXIT_EXECUTOR.submit(symbol=evt.symbol, side="long")
                     _write_exit_csv(evt)
                     logging.info(f"[EXIT] {evt.exit_type} hit on {evt.symbol} @ {evt.price:.6f} (tf={tf})")
 
 
 _COORD = _CandleCloseCoordinator()
 
+
+def _close_long_market(symbol: str):
+    # pick correct holdSide depending on pos mode
+    pos_mode = get_pos_mode(symbol).lower()  # one_way_mode | hedge_mode
+    hold_side = None if pos_mode == "one_way_mode" else "long"
+    return flash_close_positions(symbol, hold_side=hold_side)
+
+import queue, threading, time, logging
+
+class ExitExecutor:
+    """
+    Single actor thread. Serializes per-symbol so a flood of exits
+    at the same candle boundary doesn't race on the same instrument.
+    """
+    def __init__(self, close_fn):
+        self._q = queue.Queue()
+        self._inflight = set()
+        self._lock = threading.Lock()
+        self._close_fn = close_fn  # callable(symbol, side) -> dict
+        self._t = threading.Thread(target=self._run, name="ExitExecutor", daemon=True)
+        self._t.start()
+
+    def submit(self, symbol: str, side: str):
+        # coalesce: if a symbol is already being processed, we still enqueue;
+        # the actor will process them in order but only one at a time.
+        self._q.put((symbol, side))
+
+    def _run(self):
+        while True:
+            symbol, side = self._q.get()
+            try:
+                with self._lock:
+                    if symbol in self._inflight:
+                        # Already processing this symbol; small delay & retry can help coalesce bursts
+                        # but simplest is to proceed after current one finishes.
+                        pass
+                    self._inflight.add(symbol)
+
+                # Try to close position with a reduce-only market close.
+                # If you have no position, Bitget will return a harmless error; we swallow it.
+                try:
+                    logging.info(f"[EXEC] Closing {symbol} ({side}) via market reduce-only…")
+                    self._close_fn(symbol, side)
+                except Exception:
+                    logging.exception(f"[EXEC] close failed for {symbol} ({side})")
+                finally:
+                    # tiny pause to avoid slamming the API on bursts
+                    time.sleep(0.05)
+            finally:
+                with self._lock:
+                    self._inflight.discard(symbol)
+                self._q.task_done()
+
+_EXIT_EXECUTOR = ExitExecutor(close_fn=lambda sym, _side: _close_long_market(sym))
 
 def _write_exit_csv(evt: ExitEvent):
     exists = os.path.exists(EXIT_LOG_FILE)
@@ -265,7 +325,8 @@ def place_limit_long(
     data = res.get("data") or {}
     order_id: Optional[str] = data.get("orderId")
     coid: Optional[str] = data.get("clientOid") or client_oid
-
+    if order_id or coid:
+        set_pending(symbol)
     ttl_ms = _parse_duration_to_ms(duration) if duration else 0
     expires_at_ms = int(time.time() * 1000) + ttl_ms if ttl_ms else 0
 
@@ -285,32 +346,40 @@ def place_limit_long(
 
     # ----- 3) fill-watcher -> delayed bracket -> candles loop -------------------
     def _fill_watcher():
+        # wait until terminal
         while True:
             if _is_done(symbol, order_id=order_id, client_oid=coid):
                 break
             time.sleep(0.3)
 
-        # Fetch final detail to detect fill price; fall back to limit price if not present
-        avg_fill = None
+        # inspect final state
+        final = {}
         try:
-            det = _get_order_detail(symbol, order_id=order_id, client_oid=coid).get("data") or {}
-            for k in ("fillPrice", "avgPrice", "priceAvg", "fillAvgPrice", "dealAvgPrice"):
-                if det.get(k) is not None:
-                    avg_fill = float(det[k])
-                    break
+            final = _get_order_detail(symbol, order_id=order_id, client_oid=coid).get("data") or {}
         except Exception:
             pass
-        entry_price = float(avg_fill if avg_fill is not None else qprice)
-        logging.info(f"[FILL] {symbol} detected filled; entry_price={entry_price:.8f}")
-        logging.info(f"[BRACKET] registering {symbol}: tp_pct={tp_pct}, sl_pct={sl_pct}")
-        register_delayed_bracket(symbol, entry_price=entry_price, tp_pct=tp_pct, sl_pct=sl_pct)
-        b = delayed_brackets.get(symbol)
-        logging.info(f"[BRACKET] registered {symbol}: active={bool(b and b.active)} entry={getattr(b,'entry_price',None)} tp={getattr(b,'tp',None)} sl={getattr(b,'sl',None)}")
-        # logging.info(f"[BRACKET] registering {symbol}: entry={entry_price:.8f} tp_pct={tp_pct} sl_pct={sl_pct}")
-        # register_delayed_bracket(symbol, entry_price=entry_price, tp_pct=tp_pct, sl_pct=sl_pct)
-        logging.info(f"[BRACKET] registered {symbol}: tp={getattr(delayed_brackets.get(symbol),'tp',None)} sl={getattr(delayed_brackets.get(symbol),'sl',None)}")
-        # register_delayed_bracket(symbol, entry_price=entry_price, tp_pct=tp_pct, sl_pct=sl_pct)
+        state = (final.get("state") or final.get("status") or "").lower()
 
+        if state not in {"filled", "full_fill", "success"}:
+            # cancelled/rejected/closed - unblock and return
+            guard_clear(symbol)
+            logging.info(f"[FILL] {symbol} not filled (state={state}); unblocked.")
+            return
+
+        # Filled → compute fill price
+        avg_fill = None
+        for k in ("fillPrice", "avgPrice", "priceAvg", "fillAvgPrice", "dealAvgPrice"):
+            v = final.get(k)
+            if v is not None:
+                try:
+                    avg_fill = float(v); break
+                except:
+                    pass
+        entry_price = float(avg_fill if avg_fill is not None else qprice)
+
+        logging.info(f"[FILL] {symbol} filled @ {entry_price:.8f}")
+        register_delayed_bracket(symbol, entry_price=entry_price, tp_pct=tp_pct, sl_pct=sl_pct)
+        set_open(symbol)  # block entries until TP/SL closes it
         _COORD.ensure_running()
         _COORD.watch(symbol, watch_timeframe)
 
@@ -333,7 +402,7 @@ def place_limit_long(
 
 
 def dump_bracket(symbol: str):
-    b = delayed_brackets.get(symbol)
+    b = get_bracket_snapshot(symbol)
     if not b:
         logging.info(f"[BRACKET] {symbol}: no bracket")
         return
@@ -369,7 +438,6 @@ def poke_eval_now(symbol: str, timeframe: str = "5m"):
 _PROCESSED_SL: set[str] = set()  # kept for compatibility with your existing state (o.id-like); we key by symbol here.
 
 def handle_sl_if_any(symbol: str,
-                     open_positions: dict,
                      current_balance: float,
                      df_5m,
                      idx: int,
@@ -404,8 +472,8 @@ def handle_sl_if_any(symbol: str,
     exit_type = evt.exit_type  # "TP" | "SL"
 
     # compute pnl if we can
-    size = open_positions.get(symbol, {}).get("amount") or 0.0
-    entry = open_positions.get(symbol, {}).get("entry_price") or 0.0
+    size = 0.0
+    entry = 0.0
     pnl = 0.0
     try:
         size = float(size)
@@ -448,69 +516,13 @@ def handle_sl_if_any(symbol: str,
 
     # consume/close
     _PROCESSED_SL.add(symbol)   # keyed by symbol for compatibility
-    if symbol in open_positions:
-        del open_positions[symbol]
+    guard_clear(symbol)
     closed = True
 
     return new_balance, closed
 
 
 # ----------------------------- restart recovery -----------------------------------------------
-def recover_open_positions_and_watch_old(symbols: list[str],
-                                     watch_timeframe: str = "5m",
-                                     default_tp_pct: float = 0.01,
-                                     default_sl_pct: float = 0.02):
-    """
-    On process start, call this to discover any existing open LONG positions and pending working orders,
-    recreate delayed brackets, and resume candle-close monitoring.
-    """
-    for symbol in symbols:
-        # 1) detect open long position (Bitget V2 MIX)
-        entry_price = None
-        has_long = False
-        try:
-            # Try single-position first (if supported); otherwise fall back to all-positions.
-            resp = _req("POST", "/api/v2/mix/position/single-position",
-                        body={"symbol": symbol, "productType": PRODUCT_TYPE})
-            data = (resp or {}).get("data") or {}
-            for k in ("avgOpenPrice", "avgPrice", "openAvgPrice", "openPriceAvg"):
-                if data.get(k) is not None:
-                    entry_price = float(data[k]); break
-            # Some APIs expose size or hold amount
-            long_sz = float(data.get("total") or data.get("holdAmount") or data.get("longQty") or 0.0)
-            has_long = long_sz > 0
-        except Exception:
-            # fallback – optional; if this fails silently, we just won't recreate a bracket.
-            try:
-                resp = _req("POST", "/api/v2/mix/position/all-position",
-                            body={"productType": PRODUCT_TYPE})
-                arr = (resp or {}).get("data") or []
-                for row in arr:
-                    if str(row.get("symbol")) == symbol:
-                        for k in ("avgOpenPrice", "avgPrice", "openAvgPrice", "openPriceAvg"):
-                            if row.get(k) is not None:
-                                entry_price = float(row[k]); break
-                        long_sz = float(row.get("total") or row.get("holdAmount") or row.get("longQty") or 0.0)
-                        has_long = long_sz > 0
-                        break
-            except Exception:
-                pass
-
-        if has_long and entry_price:
-            # recreate bracket & watch
-            register_delayed_bracket(symbol, entry_price=entry_price,
-                                     tp_pct=default_tp_pct, sl_pct=default_sl_pct)
-            _COORD.ensure_running()
-            _COORD.watch(symbol, watch_timeframe)
-            logging.info(f"[RECOVER] watching live bracket for {symbol} (entry={entry_price})")
-
-        # 2) detect working limit orders that might need TTL self-cancel (optional)
-        try:
-            # If you store clientOids, you could rebuild timers too; here we just resume watching price.
-            pass
-        except Exception:
-            pass
-
 
 def _select_long_row(row_or_list):
     """
@@ -626,15 +638,31 @@ def recover_open_positions_and_watch(symbols: list[str],
             entry_price, size = _extract_entry_and_size(cand_all)
 
         if entry_price and size and size > 0:
-            logging.info(f"[RECOVER] {symbol}: LONG detected size={size} entry={entry_price}")
-            register_delayed_bracket(symbol, entry_price=entry_price,
-                                     tp_pct=default_tp_pct, sl_pct=default_sl_pct)
-            b = delayed_brackets.get(symbol)
-            logging.info(f"[RECOVER] {symbol}: bracket active={bool(b and b.active)} tp={b.tp} sl={b.sl}")
+            # Register a bracket only if one isn’t already active
+            if not has_active_bracket(symbol):
+                register_delayed_bracket(
+                    symbol,
+                    entry_price=entry_price,
+                    tp_pct=default_tp_pct,
+                    sl_pct=default_sl_pct,
+                )
+            br = get_bracket_snapshot(symbol)
+            logging.info(
+                "[RECOVER] %s: bracket active=%s tp=%s sl=%s",
+                symbol,
+                bool(br and br.active),
+                getattr(br, "tp", None),
+                getattr(br, "sl", None),
+            )
+
+            # seed the guard so the live loop won’t place a fresh limit
+            set_open(symbol)
+
             _COORD.ensure_running()
             _COORD.watch(symbol, watch_timeframe)
         else:
-            logging.info(f"[RECOVER] {symbol}: no open long found")
+            logging.info("[RECOVER] %s: no open long found", symbol)
+
 
 
 def force_register_bracket_from_position(symbol: str, tf: str = "5m",
@@ -687,7 +715,7 @@ def audit_and_fix_brackets(symbols: list[str],
     live = _position_map_long()
     for s in symbols:
         pos = live.get(s)
-        b = delayed_brackets.get(s)
+        b = get_bracket_snapshot(s)
         if pos:
             # ensure bracket exists & is complete
             e, sz = _extract_entry_and_size(pos)

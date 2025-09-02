@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import zoneinfo
 from typing import Dict, Any, List, Tuple, Optional
 from grok_produce.structured.api_client.v2_bootstrap_client import _req, MARGIN_COIN, PRODUCT_TYPE
+from grok_produce.structured.api_client.entry_guard import seed_open_many
 
 TORONTO_TZ = zoneinfo.ZoneInfo("America/Toronto")
 
@@ -119,7 +120,7 @@ def _entries_today(symbol: str) -> int:
             n += 1
     return n
 
-def rebuild_runtime_state(SYMBOLS: List[str]) -> Tuple[Dict[str, Any], Dict[str, int], Dict[str, int]]:
+def rebuild_runtime_state(SYMBOLS: List[str]) -> Tuple[Dict[str, int], Dict[str, int]]:
     """
     Returns (open_positions, trades_today, skip_day) for the given SYMBOLS.
     open_positions[symbol] = {
@@ -163,5 +164,6 @@ def rebuild_runtime_state(SYMBOLS: List[str]) -> Tuple[Dict[str, Any], Dict[str,
             "entry_price": entry_price,
             "amount": amount,
         }
-
-    return open_positions, trades_today, skip_day
+    open_syms = [s for s, pos in positions.items() if pos and float(pos.get("amount", 0)) != 0]
+    seed_open_many(open_syms)
+    return trades_today, skip_day
