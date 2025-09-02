@@ -7,7 +7,7 @@ import requests
 import json
 import matplotlib.pyplot as plt
 # from py._path.svnwc import cache
-
+from instruments.ConcreteInstrument import ConcreteInstrument
 from scratch_pad_bollinger import plot_with_bb
 from technical_indicators.bollinger_strategy import calculate_bollinger_bands, check_crossing_bands
 
@@ -81,7 +81,7 @@ def convert_numpy_to_pd(numpy_candlesticks):
         "Volume": numpy_candlesticks[5, :]
     })
     df['Date'] = pd.to_datetime(df['Date'], unit='ms')
-    print(df.head())
+    # print(df.head())
     return df
 
 import numpy as np
@@ -199,12 +199,30 @@ if __name__ == '__main__':
     # print(perp_instruments)
     per_instrument_candlesticks = {}
     for instrument in perp_instruments:
-        if "CHZ" in instrument:
-            candlesticks = do_get_on_url(the_complete_candlestick + "ADA_USDT" +
-                                                  the_get_candlestick_endpoint_period_string +
-                                                  the_get_candlestick_timeframes["15m"] + "&count=" + "1000")
-            json_candlesticks = json.loads(candlesticks)
-            numpy_candlesticks = convert_candlesticks_to_numpy(json_candlesticks)
+        ci = ConcreteInstrument(instrument)
+        ci.store_obj()
+        # ci.set_5m(candlesticks)
+        # continue
+    # exit()
+    #     if "CHZ" in instrument:
+        candlesticks = do_get_on_url(the_complete_candlestick + instrument +
+                                              the_get_candlestick_endpoint_period_string +
+                                              the_get_candlestick_timeframes["5m"] + "&count=" + "4000")
+        json_candlesticks = json.loads(candlesticks)
+        numpy_candlesticks = convert_candlesticks_to_numpy(json_candlesticks)
+        pd_candlesticks = convert_numpy_to_pd(numpy_candlesticks)
+        candle_data = pd_candlesticks
+        data = candle_data
+        stock_data = calculate_bollinger_bands(pd_candlesticks)
+
+        # Check for crossings
+        crossings = check_crossing_bands(pd_candlesticks)
+
+        # Print crossings
+        # for crossing in crossings:
+        if len(crossings) > 0:
+            print(f"{instrument} did Cross {crossings[-1][1]} band at {crossings[-1][0]}")
+        # exit(0)
     # for instrument_details in json_response["result"]["data"]:
     #     if 'ADA_USDT' in instrument_details["symbol"]:
     #         print(instrument_details["symbol"])
@@ -230,7 +248,7 @@ if __name__ == '__main__':
     #
     #         break
 
-    sui_usdt = fetch_candlesticks("SUI_USDT", '15m', 400)
+    # sui_usdt = fetch_candlesticks("SUI_USDT", '15m', 400)
     #===================================================================================================================
     #===================================================================================================================
     #===================================================================================================================
@@ -247,7 +265,7 @@ if __name__ == '__main__':
     for crossing in crossings:
         print(f"Crossed {crossing[1]} band at {crossing[0]}")
 
-    plot_with_bb(data)
+    # plot_with_bb(data)
     # change_point_detection(numpy_candlesticks[3,:])
     # closing_ema_21 = exponential_moving_average(numpy_candlesticks[3,:], 0.2, 21)
     # closing_ema_89 = exponential_moving_average(numpy_candlesticks[3,:], 0.2, 89)

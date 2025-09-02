@@ -21,7 +21,7 @@ def calculate_bollinger_bands(data, window=20, num_std_dev=2):
     # Calculate upper and lower bands
     data['Upper Band'] = data['Rolling Mean'] + (data['Rolling Std'] * num_std_dev)
     data['Lower Band'] = data['Rolling Mean'] - (data['Rolling Std'] * num_std_dev)
-    print(data)
+    # print(data)
     return data
 
 def check_crossing_bands(data):
@@ -36,10 +36,14 @@ def check_crossing_bands(data):
     """
     crossings = []
     for i in range(1, len(data)):
-        if data['Close'].iloc[i] > data['Upper Band'].iloc[i] and data['Close'].iloc[i - 1] < data['Upper Band'].iloc[i - 1]:
-            crossings.append((data.index[i], 'Upper'))
+        if data['High'].iloc[i] > data["Upper Band"].iloc[i] and data["High"].iloc[i - 1] < data["Upper Band"].iloc[i - 1]:
+            crossings.append((data['Date'].iloc[i], 'Upper_High'))
+        elif data['Low'].iloc[i] < data["Lower Band"].iloc[i] and data["Low"].iloc[i - 1] < data["Lower Band"].iloc[i - 1]:
+            crossings.append((data['Date'].iloc[i], 'Lower_Low'))
+        elif data['Close'].iloc[i] > data['Upper Band'].iloc[i] and data['Close'].iloc[i - 1] < data['Upper Band'].iloc[i - 1]:
+            crossings.append((data['Date'].iloc[i], 'Upper_Close'))
         elif data['Close'].iloc[i] < data['Lower Band'].iloc[i] and data['Close'].iloc[i - 1] > data['Lower Band'].iloc[i - 1]:
-            crossings.append((data.index[i], 'Lower'))
+            crossings.append((data['Date'].iloc[i], 'Lower_Close'))
     return crossings
 
 # Fetch historical data

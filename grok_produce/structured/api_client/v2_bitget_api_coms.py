@@ -1,0 +1,3 @@
+API_KEY = "***REMOVED***"
+API_SECRET = "***REMOVED***"
+API_PASSPHRASE = "***REMOVED***"
