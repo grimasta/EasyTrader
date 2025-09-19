@@ -1,10 +1,9 @@
 # ------------ CONFIG ------------
 import time
 
-from grok_produce.structured.proof_of_concept_for_order_placing import _req
+from grok_produce.structured.live.live_constants import PRODUCT_TYPE, MARGIN_COIN
+from grok_produce.structured.api_client.v2_bootstrap_client import _req
 
-PRODUCT_TYPE = "USDT-FUTURES"
-MARGIN_COIN = "USDT"
 
 # ------------ HELPERS ------------
 def _get_pending_buy_order_id(symbol: str) -> str | None:

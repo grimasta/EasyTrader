@@ -1,5 +1,5 @@
 # ---------- Cold start state rebuild ----------
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 import zoneinfo
 from typing import Dict, Any, List, Tuple, Optional
 from grok_produce.structured.api_client.v2_bootstrap_client import _req, MARGIN_COIN, PRODUCT_TYPE
@@ -24,8 +24,8 @@ def _get_all_positions() -> List[Dict[str, Any]]:
 
 def _latest_open_buy_order_id(symbol: str, lookback_days: int = 7) -> Optional[str]:
     """Find latest executed OPEN/BUY orderId for symbol (recent window)."""
-    end_ms = _utc_ms(datetime.utcnow())
-    start_ms = _utc_ms(datetime.utcnow() - timedelta(days=lookback_days))
+    end_ms = _utc_ms(datetime.now(UTC))
+    start_ms = _utc_ms(datetime.now(UTC) - timedelta(days=lookback_days))
     res = _req("GET", "/api/v2/mix/order/history", params={
         "productType": PRODUCT_TYPE, "symbol": symbol,
         "startTime": str(start_ms), "endTime": str(end_ms), "limit": "100"
@@ -136,7 +136,7 @@ def rebuild_runtime_state(SYMBOLS: List[str]) -> Tuple[Dict[str, int], Dict[str,
 
     # Fill trades_today and skip_day from history
     from datetime import datetime
-    today = datetime.now().date()
+    today = datetime.now(UTC).date()
     for sym in SYMBOLS:
         trades_today[sym][today] = _entries_today(sym)
         executed = _tp_sl_executed_today(sym)

@@ -18,7 +18,7 @@ API_SECRET = "***REMOVED***"
 API_PASSPHRASE = "***REMOVED***"
 
 # Sandbox mode flag (set to True for mock environment, False for live market data)
-SANDBOX_MODE = True
+SANDBOX_MODE = False
 # SANDBOX_MODE = True
 if SANDBOX_MODE:
     API_KEY = "***REMOVED***"
@@ -67,16 +67,24 @@ def fetch_data(symbol, timeframe='5m', start_date=None, end_date=None, limit=100
     end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp() * 1000)
     all_ohlcv = []
     current_ts = start_ts
-    max_candles = 105120 if timeframe == '5m' else 2190
+    max_candles = (end_ts - start_ts) / 60000 #minutes
+    max_candles_5m = max_candles / 5
+    max_candles = max_candles / 60 #hours
+    max_candles_4h = max_candles / 4
+    print(max_candles_5m, max_candles_4h)
+    # exit()
+    max_candles = max_candles_5m if timeframe == '5m' else max_candles_4h
     # if SANDBOX_MODE:
         # symbol = symbol.replace('USDT', 'USDT_UMCBL') if 'USDT_UMCBL' not in symbol else symbol
-
+    if timeframe == '5m':
+        step = 5 * limit * 60 * 1000
     while current_ts < end_ts and len(all_ohlcv) < max_candles:
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=current_ts, limit=limit)
             if not ohlcv:
                 logging.warning(f"No more data for {symbol} at {datetime.fromtimestamp(current_ts/1000)}")
-                break
+                current_ts += step
+                continue
             all_ohlcv.extend(ohlcv)
             current_ts = ohlcv[-1][0] + 1
             # logging.debug(f"Fetched {len(ohlcv)} candles for {symbol} up to {datetime.fromtimestamp(current_ts/1000)}")
@@ -84,6 +92,7 @@ def fetch_data(symbol, timeframe='5m', start_date=None, end_date=None, limit=100
         except Exception as e:
             logging.error(f"Bitget API error for {symbol}: {e}")
             time.sleep(2)
+    print(len(all_ohlcv), timeframe)
     df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     # exit()
     start_date_dt = pd.to_datetime(start_date, format='%Y-%m-%d').timestamp()*1000

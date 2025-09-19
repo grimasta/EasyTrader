@@ -1,7 +1,7 @@
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
-from grok_produce.structured.proof_of_concept_for_order_placing import _req
-PRODUCT_TYPE = "usdt-futures"   # lowercase for market endpoints
-MARGIN_COIN = "USDT"
+
+from grok_produce.structured.live.live_constants import  PRODUCT_TYPE
+from grok_produce.structured.api_client.v2_bootstrap_client import _req
 
 def get_contract(symbol: str) -> dict:
     """Fetch contract config for one symbol (DOTUSDT, etc.)."""

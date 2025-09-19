@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time, threading, queue
 from dataclasses import dataclass, replace
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Tuple
 
 # ----------------- Data -----------------
 @dataclass

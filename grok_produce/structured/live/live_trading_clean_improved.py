@@ -1,39 +1,27 @@
-import logging, time, json
-from datetime import datetime, timedelta
+import logging, time
+from datetime import datetime
 import pandas as pd
 
+from grok_produce.structured.api_client.v2_get_account_balance import get_account_balance, get_account_current
+from grok_produce.structured.live.live_constants import STRATEGY_NAME, WATCH_TIMEFRAME, SYMBOLS, PROFIT_TARGET, \
+    STOP_LOSS, LEVERAGE, POSITION_SIZE, LOSS_LIMIT
 # STRATEGY + API bits you already have
 from grok_produce.structured.strategies.strategies_live import STRATEGIES
 from grok_produce.structured.api_client.v2_calc_correct_pos import compute_position_size
-from grok_produce.structured.proof_of_concept_for_order_placing import (
-    get_future_symbol_mark_price, get_account_balance, get_account_current, get_entry_price
-)
 from grok_produce.structured.api_client.v2_runtime_rebuild import rebuild_runtime_state
 
 # Unified background coordinator (limit entry + on-close TP/SL + recovery)
 from grok_produce.structured.api_client.background_order_tpsl_coordinator import (
-    place_limit_long, handle_sl_if_any, recover_open_positions_and_watch, dump_bracket, poke_eval_now,
-    force_register_bracket_from_position, audit_and_fix_brackets
+    place_limit_long, handle_sl_if_any, recover_open_positions_and_watch, audit_and_fix_brackets
 )
 from grok_produce.structured.api_client.entry_guard import is_blocked as guard_blocked
 from grok_produce.structured.api_client.v2_on_candle_close_tp_sl import has_active_bracket
 
 # Live candles (global manager)
 from grok_produce.structured.websocket.bitget_live_klines import (
-    init_global_manager, BitgetEndpoints, get_5m_from, get_4h_from, warn_if_stale
+    init_global_manager, BitgetEndpoints, get_5m_from, get_4h_from
 )
 
-# ---------- your constants ----------
-SYMBOLS = ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','XRPUSDT','BNBUSDT','TRXUSDT',
-           'ADAUSDT','LINKUSDT','DOTUSDT','AVAXUSDT','ICPUSDT','LTCUSDT','NEARUSDT']
-LEVERAGE = 10
-POSITION_SIZE = 0.01
-PROFIT_TARGET = 0.012          # 1.2% gross by default; you can tune per symbol
-STOP_LOSS = 0.02
-MAX_TRADES_PER_DAY = 10
-STRATEGY_NAME = 'best_momentum'
-LOSS_LIMIT = 0.40               # stop if equity drops by 40%
-WATCH_TIMEFRAME = "5m"          # which TF to use for on-close checks
 
 # ---------- logging ----------
 logging.basicConfig(
@@ -93,8 +81,8 @@ def _rotate_day(trades_today, skip_day):
         # create a bucket for today if missing
         if today not in trades_today[s]:
             trades_today[s][today] = 0
-        # decay skip counter once/day
-        if skip_day[s] > 0:
+        # decay skip counter once/day per symbol
+        if skip_day.get(s, 0) > 0:
             skip_day[s] -= 1
 
 def live_trading(strategy_name=STRATEGY_NAME):
@@ -151,14 +139,13 @@ def live_trading(strategy_name=STRATEGY_NAME):
             # warn_if_stale()
             for symbol in SYMBOLS:
 
-                if guard_blocked(symbol) or has_active_bracket(symbol):
-                    continue
+
                 # warn_if_stale()
                 # Per-day limits / cooldown
                 if skip_day[symbol] > 0:
                     continue
-                if trades_today[symbol].get(now_day, 0) >= MAX_TRADES_PER_DAY:
-                    continue
+                # if trades_today[symbol].get(now_day, 0) >= MAX_TRADES_PER_DAY:
+                #     continue
 
                 # --- Data pull (thread-safe snapshots) ---
                 df_5m = get_5m_from(symbol)
@@ -179,6 +166,9 @@ def live_trading(strategy_name=STRATEGY_NAME):
                     # also consume any exits logged by the background bracket (if any)
                     handle_sl_if_any(symbol, get_account_balance("USDT"), df_5m, idx, strategy_name, skip_day)
                     continue
+                if signal:
+                    if guard_blocked(symbol) or has_active_bracket(symbol):
+                        continue
                 # --- Risk / balance check ---
                 current_balance = float(get_account_balance("USDT"))
                 bal_after, closed = handle_sl_if_any(symbol, current_balance, df_5m, idx, strategy_name,
@@ -216,7 +206,7 @@ def live_trading(strategy_name=STRATEGY_NAME):
 
 
                 # Increment daily trade count only on successful place (keep it simple)
-                trades_today[symbol][now_day] = trades_today[symbol].get(now_day, 0) + 1
+                # trades_today[symbol][now_day] = trades_today[symbol].get(now_day, 0) + 1
 
                 # # After placing, also check if a candle-close exit fired meanwhile (rare but safe)
                 # bal_after, closed = handle_sl_if_any(symbol, current_balance, df_5m, idx, strategy_name, skip_day)

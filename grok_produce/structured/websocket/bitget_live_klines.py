@@ -385,11 +385,12 @@ class LiveKlinesManager:
 
             # server error/event frames
             if isinstance(msg, dict) and msg.get("event") == "error":
-                logging.error("[WS] server ERROR: %r", msg)
+                with open("WS_errors.log", 'a') as error_file:
+                    print("[WS] server ERROR: %r", msg, file=error_file)
                 return
 
             if isinstance(msg, dict) and msg.get("event") == "subscribe":
-                logging.info("[WS] subscribed ok: %r", msg.get("arg") or msg)
+                # logging.info("[WS] subscribed ok: %r", msg.get("arg") or msg)
                 return
 
             # app-level ping/pong noise
@@ -441,7 +442,15 @@ class LiveKlinesManager:
                 logging.error("[WS] _merge_live_rows failed for %s %s", symbol, tf, exc_info=True)
 
         def _on_error(ws: WebSocketApp, error: Exception):
-            logging.error("WS error", exc_info=True)
+            # Many WS disconnects are normal (network blips, server rotations). We auto-reconnect.
+            try:
+                from websocket._exceptions import WebSocketConnectionClosedException as _WSClosed
+            except Exception:
+                _WSClosed = None
+            if _WSClosed and isinstance(error, _WSClosed):
+                logging.warning("WS connection closed (will reconnect): %s", error)
+            else:
+                logging.error("WS error", exc_info=True)
 
         def _on_close(ws, *args):
             code = reason = None
@@ -513,8 +522,16 @@ class LiveKlinesManager:
         try:
             # Explicit: 0 disables WS-level ping (we use app-level)
             self._ws_app.run_forever(ping_interval=0)
-        except Exception:
-            logging.error("websocket.run_forever failed", exc_info=True)
+        except Exception as e:
+            # Downgrade expected close exceptions to INFO/WARNING to reduce noise.
+            try:
+                from websocket._exceptions import WebSocketConnectionClosedException as _WSClosed
+            except Exception:
+                _WSClosed = None
+            if _WSClosed and isinstance(e, _WSClosed):
+                logging.info("websocket.run_forever ended: connection closed (will reconnect): %s", e)
+            else:
+                logging.error("websocket.run_forever failed", exc_info=True)
         finally:
             # ensure we won’t leave background threads dangling
             pass

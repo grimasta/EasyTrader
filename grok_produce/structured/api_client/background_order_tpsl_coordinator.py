@@ -1,20 +1,23 @@
 from __future__ import annotations
-import re, time, threading, logging, csv, os
+import re, csv, os
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, Deque
 from collections import deque
 from datetime import datetime
+import threading
+import requests
 
 # ==== Your existing primitives (from the files you shared) =====================================
 from grok_produce.structured.api_client.v2_bootstrap_client import quantize_price
-from grok_produce.structured.proof_of_concept_for_order_placing import _req
-from grok_produce.structured.proof_of_concept_for_order_placing import MARGIN_COIN, PRODUCT_TYPE  # e.g., USDT / USDT-FUTURES
-from grok_produce.structured.proof_of_concept_for_order_placing import flash_close_positions, get_pos_mode
+from grok_produce.structured.api_client.v2_flash_close_post import flash_close_positions
+from grok_produce.structured.api_client.v2_get_pos_mode import get_pos_mode
+from grok_produce.structured.api_client.v2_bootstrap_client import _req
+from grok_produce.structured.live.live_constants import SKIP_DAY_DELAY, MARGIN_COIN, PRODUCT_TYPE  # e.g., USDT / USDT-FUTURES
 from grok_produce.structured.api_client.self_cancel_timer import schedule_self_cancel  # threading.Timer helper
 
 from grok_produce.structured.api_client.v2_on_candle_close_tp_sl import (
     register_delayed_bracket, on_candle_close,
-    get_bracket_snapshot, has_active_bracket, deactivate_bracket, clear_bracket
+    get_bracket_snapshot, has_active_bracket, clear_bracket
 )
 from grok_produce.structured.api_client.entry_guard import set_pending, set_open, clear as guard_clear
 from grok_produce.structured.websocket.bitget_live_klines import get_5m_from, get_4h_from
@@ -24,9 +27,9 @@ from grok_produce.structured.websocket.bitget_live_klines import get_5m_from, ge
 
 
 OrderId = str
-
+_last_sig_err_ts = 0.0
 # ----------------------------- config / I/O ----------------------------------------------------
-EXIT_LOG_FILE = "exit_log.csv"      # TP/SL hits appended here (CSV)
+EXIT_LOG_FILE = "EXIT_LOG_LOCATION_ENV_VAR"      # TP/SL hits appended here (CSV)
 LOSS_LOG_PREFIX = "loss_log_"       # keep compatibility with your earlier naming
 TP_LOG_PREFIX = "tp_log_"           # optional separate TP stream if you want
 
@@ -48,16 +51,35 @@ def _parse_duration_to_ms(s: str) -> int:
 
 
 # ----------------------------- Bitget helpers (detail / cancel) -------------------------------
-def _get_order_detail(symbol: str, *, order_id: Optional[str] = None, client_oid: Optional[str] = None) -> dict:
-    """
-    POST /api/v2/mix/order/detail (accepts orderId or clientOid)
-    """
-    body = {"symbol": symbol, "productType": PRODUCT_TYPE}
+# def _get_order_detail(symbol: str, *, order_id: Optional[str] = None, client_oid: Optional[str] = None) -> dict:
+#     """
+#     POST /api/v2/mix/order/detail (accepts orderId or clientOid)
+#     """
+#     body = {"symbol": symbol, "productType": PRODUCT_TYPE}
+#     if order_id:
+#         body["orderId"] = order_id
+#     if client_oid and "orderId" not in body:
+#         body["clientOid"] = client_oid
+#     return _req("POST", "/api/v2/mix/order/detail", body=body)
+
+def _get_order_detail(symbol: str, *, order_id: str | None = None, client_oid: str | None = None):
+    # prefer orderId when both are present; error only if both missing
+    if order_id is None and client_oid is None:
+        raise ValueError("provide order_id or client_oid")
+
+    params = {
+        "symbol": symbol,
+        "productType": "USDT-FUTURES",  # keep consistent casing across your codebase
+    }
     if order_id:
-        body["orderId"] = order_id
-    if client_oid and "orderId" not in body:
-        body["clientOid"] = client_oid
-    return _req("POST", "/api/v2/mix/order/detail", body=body)
+        params["orderId"] = str(order_id)
+    else:
+        params["clientOid"] = str(client_oid)
+
+    # GET + params (no body)
+    return _req("GET", "/api/v2/mix/order/detail", params=params, body=None)
+
+
 
 def _is_done(symbol: str, order_id: Optional[str], client_oid: Optional[str]) -> bool:
     """
@@ -68,6 +90,18 @@ def _is_done(symbol: str, order_id: Optional[str], client_oid: Optional[str]) ->
         data = res.get("data") or {}
         state = str(data.get("state") or data.get("status") or "").lower()
         return state in {"filled", "canceled", "cancelled", "closed", "finished", "rejected"}
+    except requests.HTTPError as e:
+        txt = str(e)
+        global _last_sig_err_ts
+        if '"code":"40009"' in txt:
+            now = time.time()
+            if now - _last_sig_err_ts > 5:
+                logging.error("Signature error on order/detail; pausing 5s. %s", txt)
+            _last_sig_err_ts = now
+            time.sleep(5)
+        else:
+            logging.error("Order/detail failed: %s", txt)
+        return False
     except Exception as e:
         logging.error(f"Exception Raised in _is_done: {e}")
         return False
@@ -189,7 +223,10 @@ class _CandleCloseCoordinator:
                     )
                     _EXIT_EVENTS.append(evt)
                     _EXIT_EXECUTOR.submit(symbol=evt.symbol, side="long")
-                    _write_exit_csv(evt)
+                    try:
+                        _write_exit_csv(evt)
+                    except:
+                        print("Google Drive probably died")
                     logging.info(f"[EXIT] {evt.exit_type} hit on {evt.symbol} @ {evt.price:.6f} (tf={tf})")
 
 
@@ -200,8 +237,14 @@ def _close_long_market(symbol: str):
     # pick correct holdSide depending on pos mode
     pos_mode = get_pos_mode(symbol).lower()  # one_way_mode | hedge_mode
     hold_side = None if pos_mode == "one_way_mode" else "long"
-    return flash_close_positions(symbol, hold_side=hold_side)
+    res = flash_close_positions(symbol, hold_side=hold_side)
+    clear_bracket(symbol)
+    return res
 
+
+# 2025-09-11 02:40:00,358 | WARNING | [REST] rows fetched for BTCUSDT 5m are 99, less than defined limit 100
+# 2025-09-11 02:40:00,824 | WARNING | [REST] rows fetched for ETHUSDT 5m are 99, less than defined limit 100
+# 2025-09-11 02:40:01,741 | WARNING | [REST] rows fetched for DOGEUSDT 5m are 99, less than defined limit 100
 import queue, threading, time, logging
 
 class ExitExecutor:
@@ -247,6 +290,10 @@ class ExitExecutor:
                 with self._lock:
                     self._inflight.discard(symbol)
                 self._q.task_done()
+                # NOTE: Do not clear entry_guard state here. Let handle_sl_if_any() apply cooldown
+                # (skip_day) and then clear the guard to avoid a race where a new entry is placed
+                # before cooldown is applied after a StopLoss.
+
 
 _EXIT_EXECUTOR = ExitExecutor(close_fn=lambda sym, _side: _close_long_market(sym))
 
@@ -510,14 +557,21 @@ def handle_sl_if_any(symbol: str,
             pd.DataFrame(loss_log).to_csv(f'{TP_LOG_PREFIX}{strategy_name}.csv', mode='a', index=False, header=not os.path.exists(f'{TP_LOG_PREFIX}{strategy_name}.csv'))
 
         logging.info(f"[{exit_type}] {symbol} exit at {exit_price}. Δ={pnl:.4f}; new balance={new_balance:.2f}")
-        skip_day[symbol] = 1
+        # Apply cooldown only on StopLoss, not on TakeProfit
+        skip_day[symbol] = SKIP_DAY_DELAY if exit_type == "SL" else 0
+        if exit_type == "SL":
+            logging.info(f"[COOLDOWN] {symbol}: 1-day cooldown applied due to StopLoss.")
+            closed = True
+        else:
+            logging.info(f"[COOLDOWN] {symbol}: no cooldown after TakeProfit.")
+            closed = False
     except Exception as e:
         logging.error(f"Failed writing TP/SL logs: {e}")
 
     # consume/close
     _PROCESSED_SL.add(symbol)   # keyed by symbol for compatibility
     guard_clear(symbol)
-    closed = True
+
 
     return new_balance, closed
 

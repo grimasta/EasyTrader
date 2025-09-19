@@ -1,8 +1,9 @@
+import pandas
 import pandas as pd
 from datetime import datetime
 import logging
 # import colorlog
-
+import os
 # Create a logger
 # logger = logging.getLogger(__name__)
 # logger.setLevel(logging.INFO) # Set the desired logging level
@@ -17,7 +18,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logging.getLogger().setLevel(logging.INFO)
 
 # Strategy parameters
-SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'XRPUSDT']
+SYMBOLS = ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','XRPUSDT','BNBUSDT','TRXUSDT',
+           'ADAUSDT','LINKUSDT','DOTUSDT','AVAXUSDT','ICPUSDT','LTCUSDT','NEARUSDT']
 INITIAL_BALANCE = 28.44 # 2022-04-01 - 2023-01-01
 INITIAL_BALANCE = 14.69 # 2023-01-01 - 2023-08-01
 INITIAL_BALANCE = 80.16 # 2023-08-01 - 2024-04-01
@@ -83,15 +85,32 @@ def backtest(strategy_name=STRATEGY_NAME):
 
     balance = INITIAL_BALANCE
     daily_returns = []
-    start_date = '2025-01-01'
-    end_date = '2025-08-01'
+    start_date = '2020-01-01'
+    end_date = '2025-09-01'
     trades_today = {symbol: {} for symbol in SYMBOLS}
     trade_log = []
 
     for symbol in SYMBOLS:
+        if os.path.exists(f'df_5m_{symbol}.csv'):
+            df_5m = pd.read_csv(f'df_5m_{symbol}.csv')
+            df_4h = pd.read_csv(f'df_4h_{symbol}.csv')
         logging.info(f"Backtesting {symbol} with {strategy_name} strategy")
         df_5m = fetch_data(symbol, timeframe='5m', start_date=start_date, end_date=end_date)
         df_4h = fetch_data(symbol, timeframe='4h', start_date=start_date, end_date=end_date)
+        # Ensure timestamps are proper pandas datetime for downstream .date()/.time() usage
+        for df in (df_5m, df_4h):
+            if df is not None and 'timestamp' in df.columns:
+                ts = df['timestamp']
+                if not pd.api.types.is_datetime64_any_dtype(ts):
+                    # Convert from milliseconds since epoch if numeric, otherwise try generic parsing
+                    if pd.api.types.is_numeric_dtype(ts):
+                        df['timestamp'] = pd.to_datetime(ts, unit='ms', errors='coerce')
+                    else:
+                        df['timestamp'] = pd.to_datetime(ts, errors='coerce')
+                # Drop any rows where timestamp could not be parsed
+                df.dropna(subset=['timestamp'], inplace=True)
+        df_5m.to_csv(f'df_5m_{symbol}.csv', index=False)
+        df_4h.to_csv(f'df_4h_{symbol}.csv', index=False)
         if df_5m is None or df_4h is None or len(df_5m) < 100 or len(df_4h) < 50:
             logging.warning(f"Insufficient data for {symbol}: 5m={len(df_5m) if df_5m is not None else None}, 4h={len(df_4h) if df_4h is not None else None}")
             continue

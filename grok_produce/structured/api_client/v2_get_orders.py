@@ -1,10 +1,9 @@
 from typing import List, Dict, Any, Optional
 import pandas as pd
 
-from grok_produce.structured.proof_of_concept_for_order_placing import _req
+from grok_produce.structured.live.live_constants import MARGIN_COIN, PRODUCT_TYPE
+from grok_produce.structured.api_client.v2_bootstrap_client import _req
 
-PRODUCT_TYPE = "USDT-FUTURES"
-MARGIN_COIN = "USDT"
 
 
 def get_positions_all(margin_coin: str = MARGIN_COIN) -> List[Dict[str, Any]]:

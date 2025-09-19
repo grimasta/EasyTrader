@@ -1,8 +1,11 @@
 from grok_produce.structured.api_client.v2_bootstrap_client import quantize_price
-from grok_produce.structured.proof_of_concept_for_order_placing import _req
-import re, time
+from grok_produce.structured.api_client.v2_bootstrap_client import _req
+import re
 from typing import Optional
-from grok_produce.structured.proof_of_concept_for_order_placing import MARGIN_COIN, PRODUCT_TYPE
+
+from grok_produce.structured.live.live_constants import PRODUCT_TYPE, MARGIN_COIN
+
+
 # assumes you already have: _req(...), PRODUCT_TYPE="USDT-FUTURES", MARGIN_COIN="USDT"
 # and (optionally) quantize_price(symbol, price) from earlier
 

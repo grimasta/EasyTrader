@@ -3,16 +3,11 @@ from decimal import Decimal
 from typing import Any, Dict, Optional, List
 import grok_produce.structured.api_client
 from grok_produce.structured.api_client import API_PASSPHRASE, API_SECRET, API_KEY
-from grok_produce.structured.proof_of_concept_for_order_placing import TARGET_COINS
+from grok_produce.structured.live.live_constants import PRODUCT_TYPE_V2, PRODUCT_TYPE_V1, MARGIN_COIN, \
+    SYMBOLS
 
 BASE_URL = "https://api.bitget.com"
 SIM_HEADERS = {"PAPTRADING": "1"}
-PRODUCT_TYPE_V2 = "usdt-futures"           # v2 productType
-PRODUCT_TYPE_V1 = "umcbl"                  # v1 productType
-MARGIN_COIN = "USDT"
-PRODUCT_TYPE = "USDT-FUTURES"
-PRODUCT_TYPE_CAPS = "USDT-FUTURES"   # for most V2 endpoints
-PRODUCT_TYPE_LOWER = "usdt-futures"  # some plan endpoints show lowercase in docs
 
 
 def _ts_ms() -> str:
@@ -123,11 +118,11 @@ def quantize_price(symbol: str, price: float | str) -> str:
     d = ((d / step).to_integral_value(rounding=ROUND_DOWN) * step)
     return f"{d:.{places}f}"
 
-def get_pos_mode(symbol: str) -> str:
-    r = _req("GET", "/api/v2/mix/account/account",
-             params={"symbol": symbol, "productType": "USDT-FUTURES", "marginCoin": "USDT"})
-    data = r.get("data") or {}
-    return (data.get("posMode") or "one_way_mode").lower()
+# def get_pos_mode(symbol: str) -> str:
+#     r = _req("GET", "/api/v2/mix/account/account",
+#              params={"symbol": symbol, "productType": "USDT-FUTURES", "marginCoin": "USDT"})
+#     data = r.get("data") or {}
+#     return (data.get("posMode") or "one_way_mode").lower()
 
 # ---------- Market: list futures contracts ----------
 def list_umcbl_contracts() -> List[Dict[str, Any]]:
@@ -146,7 +141,7 @@ def filter_target_symbols(contracts: List[Dict[str, Any]]) -> List[str]:
     out = []
     for c in contracts:
         sym = c.get("symbol") or c.get("symbolName") or ""
-        for tc in TARGET_COINS:
+        for tc in SYMBOLS:
             if tc in sym[0:4]:
                 out.append(sym)
         # if sym.endswith("_UMCBL"):  # USDT-M perp
