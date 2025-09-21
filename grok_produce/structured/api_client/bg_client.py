@@ -76,8 +76,10 @@ def fetch_data(symbol, timeframe='5m', start_date=None, end_date=None, limit=100
     max_candles = max_candles_5m if timeframe == '5m' else max_candles_4h
     # if SANDBOX_MODE:
         # symbol = symbol.replace('USDT', 'USDT_UMCBL') if 'USDT_UMCBL' not in symbol else symbol
-    if timeframe == '5m':
-        step = 5 * limit * 60 * 1000
+    # if timeframe == '5m':
+    step = 5 * limit * 60 * 1000
+    # else:
+        # step = 5 *
     while current_ts < end_ts and len(all_ohlcv) < max_candles:
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=current_ts, limit=limit)
