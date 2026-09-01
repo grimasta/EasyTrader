@@ -4,26 +4,28 @@ import requests
 import time
 from datetime import datetime, timedelta
 import logging
-
+import os
+from dotenv import load_dotenv
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+load_dotenv()
 # Bitget API credentials (replace with your actual credentials)
-API_KEY = "***REMOVED***"
-SECRET_KEY = "***REMOVED***"
-PASSPHRASE = "***REMOVED***"
+API_KEY = os.getenv("BITGET_API_KEY")
+SECRET_KEY = os.getenv("BITGET_API_SECRET")
+PASSPHRASE = os.getenv("BITGET_API_PASSPHRASE")
 
-API_KEY = "***REMOVED***"
-API_SECRET = "***REMOVED***"
-API_PASSPHRASE = "***REMOVED***"
+API_KEY = os.getenv("BITGET_API_KEY2")
+API_SECRET = os.getenv("BITGET_API_SECRET2")
+API_PASSPHRASE = os.getenv("BITGET_API_PASSPHRASE2")
 
 # Sandbox mode flag (set to True for mock environment, False for live market data)
 SANDBOX_MODE = False
 # SANDBOX_MODE = True
 if SANDBOX_MODE:
-    API_KEY = "***REMOVED***"
-    SECRET_KEY = "***REMOVED***"
-    PASSPHRASE = "***REMOVED***"
+    API_KEY = os.getenv("BITGET_API_KEY3")
+    SECRET_KEY = os.getenv("BITGET_API_SECRET3")
+    PASSPHRASE = os.getenv("BITGET_API_PASSPHRASE3")
     passo = ""
     exchange = ccxt.bitget({
         'apiKey': API_KEY,

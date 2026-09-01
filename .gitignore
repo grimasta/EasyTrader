@@ -1,0 +1,50 @@
+.env
+.idea/
+
+
+#python noise
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+#IDE/OS noise
+
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+#runtime outputs
+*.csv
+*.json
+*.log
+exit_log*
+loss_log*
+tp_log*
+open_positions*
+
+#environment and secrets
+
+.env
+.env.*
+*.env
+secrets.py
+config_local.py
+
+#venv and packaging
+
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+#Jupyter noise
+
+.ipynb_checkpoints/
+*.ipynb

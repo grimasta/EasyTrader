@@ -1,6 +1,8 @@
 # ---------- your constants ----------
 SYMBOLS = ['BTCUSDT','ETHUSDT','SOLUSDT','DOGEUSDT','XRPUSDT','BNBUSDT','TRXUSDT',
-           'ADAUSDT','LINKUSDT','DOTUSDT','AVAXUSDT','ICPUSDT','LTCUSDT','NEARUSDT']
+           'ADAUSDT','LINKUSDT','DOTUSDT','AVAXUSDT',
+           # 'ICPUSDT',
+           'LTCUSDT','NEARUSDT']
 LEVERAGE = 10
 POSITION_SIZE = 0.01
 PROFIT_TARGET = 0.012          # 1.2% gross by default; you can tune per symbol

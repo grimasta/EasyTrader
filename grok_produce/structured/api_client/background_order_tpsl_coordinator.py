@@ -6,6 +6,8 @@ from collections import deque
 from datetime import datetime
 import threading
 import requests
+import os
+from dotenv import load_dotenv
 
 # ==== Your existing primitives (from the files you shared) =====================================
 from grok_produce.structured.api_client.v2_bootstrap_client import quantize_price
@@ -24,12 +26,12 @@ from grok_produce.structured.websocket.bitget_live_klines import get_5m_from, ge
 # ===============================================================================================
 
 
-
+load_dotenv()
 
 OrderId = str
 _last_sig_err_ts = 0.0
 # ----------------------------- config / I/O ----------------------------------------------------
-EXIT_LOG_FILE = "EXIT_LOG_LOCATION_ENV_VAR"      # TP/SL hits appended here (CSV)
+EXIT_LOG_FILE =  os.getenv("./logs/exit_log.csv")#"EXIT_LOG_LOCATION_ENV_VAR"      # TP/SL hits appended here (CSV)
 LOSS_LOG_PREFIX = "loss_log_"       # keep compatibility with your earlier naming
 TP_LOG_PREFIX = "tp_log_"           # optional separate TP stream if you want
 
