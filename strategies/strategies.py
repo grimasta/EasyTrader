@@ -1,7 +1,5 @@
 from abc import ABC, abstractmethod
-from encodings.punycode import selective_len
-
-from venues.structured.indicators import calculate_rsi, calculate_bollinger_bands, calculate_volume_ma, calculate_ema, calculate_stochastic_rsi, calculate_fourier_seasonality, calculate_rolling_sum, calculate_macd, calculate_sma, calculate_atr
+from technical_indicators import calculate_rsi, calculate_bollinger_bands, calculate_volume_ma, calculate_ema, calculate_stochastic_rsi, calculate_fourier_seasonality, calculate_rolling_sum, calculate_macd, calculate_sma, calculate_atr
 import logging
 
 
