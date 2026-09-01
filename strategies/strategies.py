@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from encodings.punycode import selective_len
+
 from venues.structured.indicators import calculate_rsi, calculate_bollinger_bands, calculate_volume_ma, calculate_ema, calculate_stochastic_rsi, calculate_fourier_seasonality, calculate_rolling_sum, calculate_macd, calculate_sma, calculate_atr
 import logging
 
@@ -132,10 +134,112 @@ class BestMomentumStrategy(Strategy):
 
         return (buy_signal or macd_signal) and volume_spike and confluence, atr
 
+class BestMomentumStrategyO200(Strategy):
+    """Stochastic RSI, MACD, Volume, relaxed conditions."""
+    def apply_indicators(self, df, timeframe='5m'):
+        df = df.copy()
+        df['stoch_rsi'] = calculate_stochastic_rsi(df, window=14)
+        df['bb_lower'], df['bb_upper'] = calculate_bollinger_bands(df, window=20, std_dev=2)
+        df['volume_ma'] = calculate_volume_ma(df, window=20)
+        df['macd'], df['signal'] = calculate_macd(df, fast=6, slow=13, signal=5)
+        df['atr'] = calculate_atr(df)
+        if timeframe == '4h':
+            df['ema_100'] = calculate_ema(df, window=100)
+        elif timeframe == '5m':
+            df['5m_ema200'] = calculate_ema(df, window=200)
+        return df
+
+    def check_4h_confluence(self, df_4h, current_time):
+        return True  # No 4h requirement
+
+    def check_signals(self, df_5m, df_4h, idx):
+        latest = df_5m.iloc[idx]
+        prev = df_5m.iloc[idx-1] if idx > 0 else latest
+        buy_signal = (latest['stoch_rsi'] < 0.3)
+        volume_spike = latest['volume'] > 1.2 * latest['volume_ma']
+        macd_signal = latest['macd'] > latest['signal']
+        confluence = self.check_4h_confluence(df_4h, latest['timestamp'])
+        o200 = latest['5m_ema200'] < latest['close']
+        atr = latest['atr']
+        # Debug logging
+        logging.debug(f"Signal check for {df_5m.iloc[idx]['timestamp']}: "
+                      f"stoch_rsi={latest['stoch_rsi']:.3f}, "
+                      f"volume_spike={latest['volume'] > 1.2 * latest['volume_ma']}, "
+                      f"macd={latest['macd']:.2f}, signal={latest['signal']:.2f}, "
+                      f"macd_signal={macd_signal}, "
+                      f"confluence={confluence}")
+
+        return (buy_signal or macd_signal) and volume_spike and confluence and o200, atr
+
+
+class BestMomentumStrategyO200_4hATR(Strategy):
+    """Stochastic RSI, MACD, Volume, relaxed conditions."""
+    def apply_indicators(self, df, timeframe='5m'):
+        df = df.copy()
+        df['stoch_rsi'] = calculate_stochastic_rsi(df, window=14)
+        df['bb_lower'], df['bb_upper'] = calculate_bollinger_bands(df, window=20, std_dev=2)
+        df['volume_ma'] = calculate_volume_ma(df, window=20)
+        df['macd'], df['signal'] = calculate_macd(df, fast=6, slow=13, signal=5)
+        df['atr'] = calculate_atr(df)
+        if timeframe == '4h':
+            df['ema_100'] = calculate_ema(df, window=100)
+        elif timeframe == '5m':
+            df['5m_ema200'] = calculate_ema(df, window=200)
+        return df
+
+    def check_4h_confluence(self, df_4h, current_time):
+        return True  # No 4h requirement
+
+    def check_signals(self, df_5m, df_4h, idx):
+        return True, 0
+
+    def check_signal_buy(self, df_5m, df_4h, idx):
+        latest = df_5m.iloc[idx]
+        prev = df_5m.iloc[idx-1] if idx > 0 else latest
+        buy_signal = (latest['stoch_rsi'] < 0.3)
+        volume_spike = latest['volume'] > 1.2 * latest['volume_ma']
+        macd_signal = latest['macd'] > latest['signal']
+        confluence = self.check_4h_confluence(df_4h, latest['timestamp'])
+        o200 = latest['5m_ema200'] < latest['close']
+        atr_4h = df_4h.iloc[-1]['atr']
+        atr_4h_over_required = atr_4h > 0.02 * latest['close']
+        atr = latest['atr']
+        # Debug logging
+        logging.debug(f"Signal check for {df_5m.iloc[idx]['timestamp']}: "
+                      f"stoch_rsi={latest['stoch_rsi']:.3f}, "
+                      f"volume_spike={latest['volume'] > 1.2 * latest['volume_ma']}, "
+                      f"macd={latest['macd']:.2f}, signal={latest['signal']:.2f}, "
+                      f"macd_signal={macd_signal}, "
+                      f"confluence={confluence}")
+
+        return (buy_signal or macd_signal) and volume_spike and confluence and o200, atr
+
+    def check_signal_sell(self, df_5m, df_4h, idx):
+        latest = df_5m.iloc[idx]
+        prev = df_5m.iloc[idx-1] if idx > 0 else latest
+        sell_signal = (latest['stoch_rsi'] > 0.9)
+        volume_spike = latest['volume'] > 1.2 * latest['volume_ma']
+        macd_signal = latest['macd'] < latest['signal']
+        confluence = self.check_4h_confluence(df_4h, latest['timestamp'])
+        o200 = latest['5m_ema200'] > latest['close']
+        atr_4h = df_4h.iloc[-1]['atr']
+        atr_4h_over_required = atr_4h > 0.02 * latest['close']
+        atr = latest['atr']
+        # Debug logging
+        logging.debug(f"Signal check for {df_5m.iloc[idx]['timestamp']}: "
+                      f"stoch_rsi={latest['stoch_rsi']:.3f}, "
+                      f"volume_spike={latest['volume'] > 1.2 * latest['volume_ma']}, "
+                      f"macd={latest['macd']:.2f}, signal={latest['signal']:.2f}, "
+                      f"macd_signal={macd_signal}, "
+                      f"confluence={confluence}")
+
+        return (sell_signal or macd_signal) and volume_spike and confluence and o200, atr
 
 STRATEGIES = {
     'current': CurrentStrategy(),
     'stochastic': StochasticStrategy(),
     'fourier_momentum': FourierMomentumStrategy(),
-    'best_momentum': BestMomentumStrategy()
+    'best_momentum': BestMomentumStrategy(),
+    'best_momentum_o200': BestMomentumStrategyO200(),
+    'best_momentum_o200_4hATR': BestMomentumStrategyO200_4hATR()
 }
