@@ -31,7 +31,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(message)s"
 )
-
+# TODO starting from here investigate low liquidity period and max leverage and adjust order package with
+#  appropriate leverage.
+# TODO starting from here investigate fetching previous filleds orders up to a certain date and adjust blocking of
+#  instruments based on that instead of relying on faulty local logs.
 def _to_std_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert our canonical columns o/h/l/c/v with index 't' (ms) into
@@ -230,4 +233,5 @@ def live_trading(strategy_name=STRATEGY_NAME):
             # backoff a bit on transient issues but keep running
             time.sleep(10)
 
-live_trading(STRATEGY_NAME)
+def run_live():
+    live_trading(STRATEGY_NAME)
