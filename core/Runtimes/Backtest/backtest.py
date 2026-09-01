@@ -1,13 +1,9 @@
 import ccxt
-import pandas as pd
 import ta
-import requests
-import time
-from datetime import datetime, timedelta
 import logging
 
 # Configure logging
-from venues.grok_auto_bitget_2 import fetch_data
+from scratch_pads.grok_auto_bitget_2 import fetch_data
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

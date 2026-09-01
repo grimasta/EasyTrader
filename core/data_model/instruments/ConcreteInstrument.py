@@ -1,4 +1,4 @@
-from instruments.abstract_instrument import Instrument
+from core.data_model.instruments.abstract_instrument import Instrument
 import pickle
 
 
