@@ -31,7 +31,7 @@ load_dotenv()
 OrderId = str
 _last_sig_err_ts = 0.0
 # ----------------------------- config / I/O ----------------------------------------------------
-EXIT_LOG_FILE =  os.getenv("./logs/exit_log.csv")#"EXIT_LOG_LOCATION_ENV_VAR"      # TP/SL hits appended here (CSV)
+EXIT_LOG_FILE =  os.getenv("EXIT_LOG_FILE")#"EXIT_LOG_LOCATION_ENV_VAR"      # TP/SL hits appended here (CSV)
 LOSS_LOG_PREFIX = "loss_log_"       # keep compatibility with your earlier naming
 TP_LOG_PREFIX = "tp_log_"           # optional separate TP stream if you want
 
