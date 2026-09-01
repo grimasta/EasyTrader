@@ -22,6 +22,7 @@ Thumbs.db
 *.csv
 *.json
 *.log
+.logs/
 exit_log*
 loss_log*
 tp_log*
