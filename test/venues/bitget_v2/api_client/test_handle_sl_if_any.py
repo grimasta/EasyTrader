@@ -1,11 +1,12 @@
 import time
 import pandas as pd
 
-from venues.bitget_v2.api_client import (
-    handle_sl_if_any, ExitEvent, _EXIT_EVENTS
-)
+# from venues.bitget_v2.api_client import (
+#     handle_sl_if_any, ExitEvent, _EXIT_EVENTS
+# )
 from core.Runtimes.Live.live_constants import SKIP_DAY_DELAY
-
+from venues.bitget_v2.api_client.background_order_tpsl_coordinator import ExitEvent, handle_sl_if_any
+from venues.bitget_v2.api_client.background_order_tpsl_coordinator import _EXIT_EVENTS
 
 def make_df(ts: float | None = None):
     if ts is None:
