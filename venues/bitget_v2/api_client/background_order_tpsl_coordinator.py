@@ -551,14 +551,6 @@ def handle_sl_if_any(symbol: str,
 
     try:
         import pandas as pd
-        # legacy loss_log_*.csv stream (works for TP too – has fields to distinguish)
-        pd.DataFrame(loss_log).to_csv(f'{LOSS_LOG_PREFIX}{strategy_name}.csv', mode='a', index=False, header=not os.path.exists(f'{LOSS_LOG_PREFIX}{strategy_name}.csv'))
-
-        # optional separate TP stream
-        if exit_type == "TP":
-            pd.DataFrame(loss_log).to_csv(f'{TP_LOG_PREFIX}{strategy_name}.csv', mode='a', index=False, header=not os.path.exists(f'{TP_LOG_PREFIX}{strategy_name}.csv'))
-
-        logging.info(f"[{exit_type}] {symbol} exit at {exit_price}. Δ={pnl:.4f}; new balance={new_balance:.2f}")
         # Apply cooldown only on StopLoss, not on TakeProfit
         skip_day[symbol] = SKIP_DAY_DELAY if exit_type == "SL" else 0
         if exit_type == "SL":
@@ -567,8 +559,18 @@ def handle_sl_if_any(symbol: str,
         else:
             logging.info(f"[COOLDOWN] {symbol}: no cooldown after TakeProfit.")
             closed = False
+
+        # Log the loss anyway
+        pd.DataFrame(loss_log).to_csv(f'{LOSS_LOG_PREFIX}{strategy_name}.csv', mode='a', index=False, header=not os.path.exists(f'{LOSS_LOG_PREFIX}{strategy_name}.csv'))
+        # optional separate TP stream
+        if exit_type == "TP":
+            pd.DataFrame(loss_log).to_csv(f'{TP_LOG_PREFIX}{strategy_name}.csv', mode='a', index=False, header=not os.path.exists(f'{TP_LOG_PREFIX}{strategy_name}.csv'))
+
+        logging.info(f"[{exit_type}] {symbol} exit at {exit_price}. Δ={pnl:.4f}; new balance={new_balance:.2f}")
+
     except Exception as e:
         logging.error(f"Failed writing TP/SL logs: {e}")
+        return new_balance, closed
 
     # consume/close
     _PROCESSED_SL.add(symbol)   # keyed by symbol for compatibility
