@@ -2,7 +2,11 @@ import time
 import pandas as pd
 import pytest
 
-from venues.bitget_v2.api_client.background_order_tpsl_coordinator import ExitEvent, handle_sl_if_any, _EXIT_EVENTS
+from venues.bitget_v2.api_client import (
+    ExitEvent,
+    handle_sl_if_any,
+    _EXIT_EVENTS
+)
 from core.Runtimes.Live.live_constants import SKIP_DAY_DELAY
 
 
