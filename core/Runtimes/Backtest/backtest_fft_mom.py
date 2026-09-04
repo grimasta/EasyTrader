@@ -1,7 +1,7 @@
 import pandas as pd
 import logging
-from venues.bitget_v2.api_client import fetch_data
-from strategies.FourierMomentumeStrategy import STRATEGIES
+# from venues.bitget_v2.api_client import fetch_data
+# from strategies.FourierMomentumeStrategy import STRATEGIES
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
